@@ -1,0 +1,8 @@
+{
+  "name": "AI Snitch Detector",
+  "description": "A high-fidelity AI authenticity verification suite. Detect AI-generated reels, news, images, and text through deep multimodal analysis and real-time voice consultation.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
