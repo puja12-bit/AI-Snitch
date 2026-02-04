@@ -1,0 +1,30 @@
+
+{
+  "short_name": "AI Snitch",
+  "name": "AI Snitch - Detector & Shield",
+  "description": "Real-time AI detection for reels, news, and scams using deep multimodal analysis.",
+  "id": "/",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#030712",
+  "background_color": "#030712",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/3242/3242257.png",
+      "type": "image/png",
+      "sizes": "512x512",
+      "purpose": "any maskable"
+    }
+  ],
+  "permissions": [
+    "storage",
+    "tabs",
+    "activeTab",
+    "scripting"
+  ],
+  "action": {
+    "default_popup": "index.html",
+    "default_title": "AI Snitch"
+  }
+}

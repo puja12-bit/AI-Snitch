@@ -13,7 +13,7 @@ const VoiceInterface: React.FC = () => {
   const nextStartTimeRef = useRef<number>(0);
   const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   const sessionRef = useRef<any>(null);
-  const animationFrameRef = useRef<number>();
+  const animationFrameRef = useRef<number | null>(null);
 
   const encode = (bytes: Uint8Array) => {
     let binary = '';
@@ -156,59 +156,74 @@ const VoiceInterface: React.FC = () => {
 
   const stopSession = () => {
     if (sessionRef.current) {
-      // In a real env, we'd close the stream and cleanup
+      try {
+        sessionRef.current.close();
+      } catch (e) {
+        console.debug('Session already closed');
+      }
       sessionRef.current = null;
     }
     setIsActive(false);
-    if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
+    if (animationFrameRef.current !== null) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
     setTranscript([]);
-    sourcesRef.current.forEach(s => s.stop());
+    sourcesRef.current.forEach(s => {
+      try {
+        s.stop();
+      } catch (e) {}
+    });
     sourcesRef.current.clear();
   };
 
+  useEffect(() => {
+    return () => stopSession();
+  }, []);
+
   return (
-    <div className="flex flex-col h-full bg-slate-950 p-6 md:p-12 items-center justify-center">
-      <div className="max-w-3xl w-full flex flex-col items-center gap-12">
+    <div className="flex flex-col h-full bg-slate-950 p-6 md:p-12 items-center justify-center overflow-y-auto">
+      <div className="max-w-3xl w-full flex flex-col items-center gap-10">
         <div className="text-center space-y-4">
-          <div className="inline-flex items-center gap-2 px-3 py-1 bg-indigo-500/10 border border-indigo-500/20 rounded-full text-indigo-400 text-xs font-bold uppercase tracking-widest">
-            <Sparkles size={14} />
-            Voice Intelligence Mode
+          <div className="inline-flex items-center gap-2 px-3 py-1 bg-indigo-500/10 border border-indigo-500/20 rounded-full text-indigo-400 text-[10px] font-bold uppercase tracking-[0.2em]">
+            <Sparkles size={12} />
+            Voice Intelligence
           </div>
-          <h2 className="text-4xl font-bold tracking-tight text-white">Live Consult</h2>
-          <p className="text-slate-400 text-lg">
-            Speak to AI Snitch in real-time about a video or message you're seeing.
+          <h2 className="text-3xl font-bold tracking-tight text-white">Live Consult</h2>
+          <p className="text-slate-400 text-sm max-w-sm mx-auto">
+            Discuss suspicious Reels or messages with AI Snitch in real-time.
           </p>
         </div>
 
         {/* Visualizer */}
-        <div className="w-full flex items-center justify-center gap-1 h-32 px-4">
+        <div className="w-full flex items-center justify-center gap-1.5 h-24 px-4">
           {visualizerBars.map((height, i) => (
             <div
               key={i}
-              className={`w-2 md:w-3 bg-gradient-to-t from-indigo-600 to-indigo-400 rounded-full transition-all duration-75 ${isActive ? 'opacity-100' : 'opacity-20 h-4'}`}
-              style={{ height: isActive ? `${height}%` : '8px' }}
+              className={`w-1.5 md:w-2 bg-gradient-to-t from-indigo-600 to-indigo-400 rounded-full transition-all duration-75 ${isActive ? 'opacity-100' : 'opacity-20 h-2'}`}
+              style={{ height: isActive ? `${height}%` : '4px' }}
             ></div>
           ))}
         </div>
 
         {/* Transcription Area */}
-        <div className="w-full bg-slate-900/50 border border-slate-800 rounded-3xl p-6 min-h-[160px] flex flex-col justify-end space-y-3">
+        <div className="w-full bg-slate-900/40 border border-slate-800 rounded-3xl p-6 min-h-[140px] flex flex-col justify-end space-y-3 shadow-inner">
           {transcript.length === 0 && !isActive && !isConnecting && (
-            <div className="text-slate-500 italic text-center text-sm py-4">
-              "Is this Instagram reel of the floating city real or AI?"
+            <div className="text-slate-500 italic text-center text-xs py-4 opacity-50">
+              "Is this video of the person eating lightbulbs real?"
             </div>
           )}
           {isConnecting && (
             <div className="flex items-center justify-center gap-3 text-indigo-400 py-8">
-              <Loader2 className="animate-spin" />
-              <span className="font-medium">Initializing encrypted voice link...</span>
+              <Loader2 size={18} className="animate-spin" />
+              <span className="text-xs font-bold tracking-wider uppercase">Connecting Audio...</span>
             </div>
           )}
           {transcript.map((line, i) => (
             <div 
               key={i} 
-              className={`text-sm md:text-base animate-in slide-in-from-bottom-2 fade-in duration-300 ${
-                line.startsWith('You:') ? 'text-indigo-300 font-medium' : 'text-slate-100'
+              className={`text-xs md:text-sm animate-in slide-in-from-bottom-2 fade-in duration-300 ${
+                line.startsWith('You:') ? 'text-indigo-300 font-bold' : 'text-slate-100'
               }`}
             >
               {line}
@@ -222,37 +237,39 @@ const VoiceInterface: React.FC = () => {
             <button
               onClick={startSession}
               disabled={isConnecting}
-              className="group relative flex flex-col items-center gap-4"
+              className="group flex flex-col items-center gap-4"
             >
-              <div className="w-24 h-24 bg-indigo-600 rounded-full flex items-center justify-center shadow-2xl shadow-indigo-600/30 group-hover:bg-indigo-500 transition-all group-active:scale-95">
-                {isConnecting ? <Loader2 className="w-10 h-10 text-white animate-spin" /> : <Mic className="w-10 h-10 text-white" />}
+              <div className="w-20 h-20 bg-indigo-600 rounded-full flex items-center justify-center shadow-2xl shadow-indigo-600/30 group-hover:bg-indigo-500 transition-all active:scale-90">
+                {isConnecting ? <Loader2 size={32} className="text-white animate-spin" /> : <Mic size={32} className="text-white" />}
               </div>
-              <span className="text-sm font-bold text-slate-300 uppercase tracking-widest">Connect Voice</span>
+              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest group-hover:text-indigo-400 transition-colors">Start Voice</span>
             </button>
           ) : (
             <button
               onClick={stopSession}
-              className="group relative flex flex-col items-center gap-4"
+              className="group flex flex-col items-center gap-4"
             >
-              <div className="w-24 h-24 bg-rose-600 rounded-full flex items-center justify-center shadow-2xl shadow-rose-600/30 group-hover:bg-rose-500 transition-all group-active:scale-95">
-                <PhoneOff className="w-10 h-10 text-white" />
+              <div className="w-20 h-20 bg-rose-600 rounded-full flex items-center justify-center shadow-2xl shadow-rose-600/30 group-hover:bg-rose-500 transition-all active:scale-90">
+                <PhoneOff size={32} className="text-white" />
               </div>
-              <span className="text-sm font-bold text-slate-300 uppercase tracking-widest">End Session</span>
+              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest group-hover:text-rose-400 transition-colors">End Session</span>
             </button>
           )}
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 w-full max-w-2xl">
           {[
-            { icon: <ShieldAlert className="text-indigo-400" />, title: "Real-time Detection", desc: "Immediate conversational analysis." },
-            { icon: <Volume2 className="text-indigo-400" />, title: "Low Latency", desc: "Sub-second response times." },
-            { icon: <Sparkles className="text-indigo-400" />, title: "Context Aware", desc: "Ask follow-up questions easily." }
+            { icon: <ShieldAlert size={16} className="text-indigo-400" />, title: "Snitch Engine", desc: "Live AI analysis." },
+            { icon: <Volume2 size={16} className="text-indigo-400" />, title: "Low Latency", desc: "Instant feedback." },
+            { icon: <Sparkles size={16} className="text-indigo-400" />, title: "Contextual", desc: "Ask questions." }
           ].map((feature, i) => (
-            <div key={i} className="bg-slate-900/40 p-4 rounded-2xl border border-slate-800 flex items-start gap-4">
-              <div className="p-2 bg-indigo-500/10 rounded-lg">{feature.icon}</div>
-              <div>
-                <h4 className="text-xs font-bold text-slate-200">{feature.title}</h4>
-                <p className="text-[10px] text-slate-500 mt-1">{feature.desc}</p>
+            <div key={i} className="bg-slate-900/30 p-4 rounded-2xl border border-white/5 flex items-center gap-3">
+              <div className="p-2.5 bg-indigo-500/10 rounded-xl shrink-0">
+                {feature.icon}
+              </div>
+              <div className="min-w-0">
+                <h4 className="text-[10px] font-black text-slate-200 uppercase tracking-wider truncate">{feature.title}</h4>
+                <p className="text-[10px] text-slate-500 mt-0.5 leading-tight">{feature.desc}</p>
               </div>
             </div>
           ))}
