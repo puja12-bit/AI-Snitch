@@ -1,13 +1,16 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { GoogleGenAI, Modality } from '@google/genai';
-import { Mic, MicOff, PhoneOff, Volume2, ShieldAlert, Sparkles, Loader2 } from 'lucide-react';
+import { Mic, MicOff, PhoneOff, Volume2, ShieldAlert, Sparkles, Loader2, AlertTriangle, ShieldCheck, Activity } from 'lucide-react';
 
 const VoiceInterface: React.FC = () => {
   const [isActive, setIsActive] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
+  const [mode, setMode] = useState<'consult' | 'guard'>('consult');
   const [transcript, setTranscript] = useState<string[]>([]);
   const [visualizerBars, setVisualizerBars] = useState<number[]>(new Array(32).fill(10));
+  const [scamRisk, setScamRisk] = useState<number>(0);
+  const [isAiVoice, setIsAiVoice] = useState<boolean | null>(null);
   
   const audioContextRef = useRef<AudioContext | null>(null);
   const nextStartTimeRef = useRef<number>(0);
@@ -59,6 +62,8 @@ const VoiceInterface: React.FC = () => {
 
   const startSession = async () => {
     setIsConnecting(true);
+    setScamRisk(0);
+    setIsAiVoice(null);
     try {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const inputAudioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
@@ -66,6 +71,19 @@ const VoiceInterface: React.FC = () => {
       audioContextRef.current = outputAudioContext;
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+      const systemInstruction = mode === 'guard' 
+        ? `YOU ARE A FORENSIC AI VOICE AUDITOR. 
+           TASK: Listen to the audio input and determine if it is a HUMAN or an AI VOICE CLONE.
+           CONTEXT: The user is holding their phone up to a suspicious call.
+           DANGER SIGNS: Monotone cadence, unnatural breathing, repetitive frequency artifacts, robotic transitions.
+           SCAM MARKERS: Requests for money, urgency, pretending to be a relative in trouble (Grandparent Scam), banking credentials.
+           OUTPUT: 
+           1. Transcribe the incoming audio.
+           2. State CLEARLY if you suspect AI VOICE CLONE.
+           3. Assign a Scam Risk % (0-100).
+           Be extremely direct and protective.`
+        : 'You are an AI authenticity consultant. Discuss suspicious Reels or news. Talk conversationally.';
 
       const sessionPromise = ai.live.connect({
         model: 'gemini-2.5-flash-native-audio-preview-12-2025',
@@ -100,9 +118,21 @@ const VoiceInterface: React.FC = () => {
           },
           onmessage: async (message) => {
             if (message.serverContent?.outputTranscription) {
-              setTranscript(prev => [...prev.slice(-4), "AI: " + message.serverContent!.outputTranscription!.text]);
+              const text = message.serverContent.outputTranscription.text;
+              setTranscript(prev => [...prev.slice(-6), "SNITCH: " + text]);
+              
+              // Dynamic logic to update UI based on AI's findings in Guard mode
+              if (mode === 'guard') {
+                if (text.toLowerCase().includes('ai voice') || text.toLowerCase().includes('synthetic')) {
+                  setIsAiVoice(true);
+                  setScamRisk(prev => Math.min(prev + 20, 100));
+                }
+                if (text.toLowerCase().includes('scam') || text.toLowerCase().includes('danger')) {
+                  setScamRisk(95);
+                }
+              }
             } else if (message.serverContent?.inputTranscription) {
-              setTranscript(prev => [...prev.slice(-4), "You: " + message.serverContent!.inputTranscription!.text]);
+              setTranscript(prev => [...prev.slice(-6), "AUDIO IN: " + message.serverContent!.inputTranscription!.text]);
             }
 
             const base64Audio = message.serverContent?.modelTurn?.parts[0]?.inlineData.data;
@@ -112,29 +142,13 @@ const VoiceInterface: React.FC = () => {
               const source = outputAudioContext.createBufferSource();
               source.buffer = audioBuffer;
               source.connect(outputAudioContext.destination);
-              
-              source.addEventListener('ended', () => {
-                sourcesRef.current.delete(source);
-              });
-              
               source.start(nextStartTimeRef.current);
               nextStartTimeRef.current += audioBuffer.duration;
               sourcesRef.current.add(source);
             }
-
-            if (message.serverContent?.interrupted) {
-              sourcesRef.current.forEach(s => s.stop());
-              sourcesRef.current.clear();
-              nextStartTimeRef.current = 0;
-            }
           },
-          onerror: (e) => {
-            console.error('Live error:', e);
-            stopSession();
-          },
-          onclose: () => {
-            stopSession();
-          }
+          onerror: () => stopSession(),
+          onclose: () => stopSession()
         },
         config: {
           responseModalities: [Modality.AUDIO],
@@ -143,136 +157,145 @@ const VoiceInterface: React.FC = () => {
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } },
           },
-          systemInstruction: 'You are an AI authenticity consultant. You help users identify if content like Reels, TikToks, messages, or news is real or AI generated. Talk conversationally. Explain what to look for: inconsistencies, artifacts, unnatural speech patterns, or too-perfect visuals. You are helpful, skeptical of unverified claims, and educational.'
+          systemInstruction: systemInstruction
         }
       });
 
       sessionRef.current = await sessionPromise;
     } catch (err) {
-      console.error("Failed to start session:", err);
+      console.error(err);
       setIsConnecting(false);
     }
   };
 
   const stopSession = () => {
     if (sessionRef.current) {
-      try {
-        sessionRef.current.close();
-      } catch (e) {
-        console.debug('Session already closed');
-      }
+      try { sessionRef.current.close(); } catch (e) {}
       sessionRef.current = null;
     }
     setIsActive(false);
-    if (animationFrameRef.current !== null) {
-      cancelAnimationFrame(animationFrameRef.current);
-      animationFrameRef.current = null;
-    }
+    if (animationFrameRef.current !== null) cancelAnimationFrame(animationFrameRef.current);
     setTranscript([]);
-    sourcesRef.current.forEach(s => {
-      try {
-        s.stop();
-      } catch (e) {}
-    });
+    sourcesRef.current.forEach(s => { try { s.stop(); } catch (e) {} });
     sourcesRef.current.clear();
   };
 
-  useEffect(() => {
-    return () => stopSession();
-  }, []);
-
   return (
-    <div className="flex flex-col h-full bg-slate-950 p-6 md:p-12 items-center justify-center overflow-y-auto">
-      <div className="max-w-3xl w-full flex flex-col items-center gap-10">
-        <div className="text-center space-y-4">
-          <div className="inline-flex items-center gap-2 px-3 py-1 bg-indigo-500/10 border border-indigo-500/20 rounded-full text-indigo-400 text-[10px] font-bold uppercase tracking-[0.2em]">
-            <Sparkles size={12} />
-            Voice Intelligence
-          </div>
-          <h2 className="text-3xl font-bold tracking-tight text-white">Live Consult</h2>
-          <p className="text-slate-400 text-sm max-w-sm mx-auto">
-            Discuss suspicious Reels or messages with AI Snitch in real-time.
+    <div className="flex flex-col h-full bg-slate-950 items-center overflow-y-auto px-6 py-8">
+      <div className="max-w-md w-full flex flex-col items-center gap-8">
+        
+        {/* Mode Selector */}
+        <div className="flex p-1 bg-slate-900 border border-slate-800 rounded-2xl w-full">
+          <button 
+            onClick={() => setMode('consult')}
+            className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${mode === 'consult' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-500'}`}
+          >
+            Consultant
+          </button>
+          <button 
+            onClick={() => setMode('guard')}
+            className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${mode === 'guard' ? 'bg-rose-600 text-white shadow-lg' : 'text-slate-500'}`}
+          >
+            Voice Guard
+          </button>
+        </div>
+
+        <div className="text-center space-y-2">
+          <h2 className="text-2xl font-black text-white uppercase tracking-tight">
+            {mode === 'consult' ? 'AI Consultation' : 'Scam Voice Auditor'}
+          </h2>
+          <p className="text-xs text-slate-500 font-bold uppercase tracking-tighter">
+            {mode === 'consult' ? 'Talk to me about suspicious media.' : 'Hold phone near speaker to detect voice clones.'}
           </p>
         </div>
 
-        {/* Visualizer */}
-        <div className="w-full flex items-center justify-center gap-1.5 h-24 px-4">
-          {visualizerBars.map((height, i) => (
-            <div
-              key={i}
-              className={`w-1.5 md:w-2 bg-gradient-to-t from-indigo-600 to-indigo-400 rounded-full transition-all duration-75 ${isActive ? 'opacity-100' : 'opacity-20 h-2'}`}
-              style={{ height: isActive ? `${height}%` : '4px' }}
-            ></div>
-          ))}
-        </div>
-
-        {/* Transcription Area */}
-        <div className="w-full bg-slate-900/40 border border-slate-800 rounded-3xl p-6 min-h-[140px] flex flex-col justify-end space-y-3 shadow-inner">
-          {transcript.length === 0 && !isActive && !isConnecting && (
-            <div className="text-slate-500 italic text-center text-xs py-4 opacity-50">
-              "Is this video of the person eating lightbulbs real?"
+        {/* Dynamic Status / Visualizer */}
+        <div className={`w-full aspect-square rounded-[3rem] border-2 transition-all duration-700 flex flex-col items-center justify-center relative overflow-hidden ${
+          isActive 
+            ? mode === 'guard' && scamRisk > 50 ? 'bg-rose-500/10 border-rose-500 shadow-[0_0_50px_rgba(244,63,94,0.3)]' : 'bg-indigo-500/10 border-indigo-500 shadow-[0_0_50px_rgba(99,102,241,0.2)]'
+            : 'bg-slate-900 border-slate-800'
+        }`}>
+          {mode === 'guard' && isActive && (
+            <div className="absolute top-8 flex flex-col items-center gap-1">
+               <div className="text-[10px] font-black text-rose-500 uppercase animate-pulse">Live Scam Meter</div>
+               <div className="w-32 h-2 bg-slate-800 rounded-full overflow-hidden border border-white/5">
+                 <div className="h-full bg-rose-500 transition-all duration-1000" style={{ width: `${scamRisk}%` }}></div>
+               </div>
             </div>
           )}
-          {isConnecting && (
-            <div className="flex items-center justify-center gap-3 text-indigo-400 py-8">
-              <Loader2 size={18} className="animate-spin" />
-              <span className="text-xs font-bold tracking-wider uppercase">Connecting Audio...</span>
+
+          <div className="flex items-center gap-1.5 h-16">
+            {visualizerBars.map((height, i) => (
+              <div
+                key={i}
+                className={`w-1 rounded-full transition-all duration-75 ${
+                  isActive 
+                    ? mode === 'guard' && scamRisk > 50 ? 'bg-rose-500' : 'bg-indigo-500'
+                    : 'bg-slate-700 h-1'
+                }`}
+                style={{ height: isActive ? `${height}%` : '4px' }}
+              ></div>
+            ))}
+          </div>
+
+          {isActive && isAiVoice && (
+            <div className="mt-8 bg-rose-500 text-white px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-widest animate-bounce flex items-center gap-2">
+              <AlertTriangle size={14} /> AI Voice Clone Detected
+            </div>
+          )}
+        </div>
+
+        {/* Live Logs */}
+        <div className="w-full bg-slate-900/50 border border-slate-800 rounded-3xl p-6 min-h-[160px] flex flex-col justify-end gap-3">
+          {transcript.length === 0 && !isActive && !isConnecting && (
+            <div className="text-center space-y-4 py-4">
+              <div className="flex justify-center gap-2 text-slate-700">
+                <Activity size={24} className="opacity-20" />
+              </div>
+              <p className="text-[10px] text-slate-600 font-bold uppercase italic">
+                {mode === 'consult' ? '"Does this reel look deepfaked?"' : 'Waiting for incoming call audio...'}
+              </p>
             </div>
           )}
           {transcript.map((line, i) => (
-            <div 
-              key={i} 
-              className={`text-xs md:text-sm animate-in slide-in-from-bottom-2 fade-in duration-300 ${
-                line.startsWith('You:') ? 'text-indigo-300 font-bold' : 'text-slate-100'
-              }`}
-            >
+            <div key={i} className={`text-[11px] font-bold leading-tight animate-in slide-in-from-bottom-1 ${
+              line.startsWith('AUDIO IN:') ? 'text-indigo-400' : 'text-slate-200'
+            }`}>
               {line}
             </div>
           ))}
-        </div>
-
-        {/* Controls */}
-        <div className="flex items-center gap-6">
-          {!isActive ? (
-            <button
-              onClick={startSession}
-              disabled={isConnecting}
-              className="group flex flex-col items-center gap-4"
-            >
-              <div className="w-20 h-20 bg-indigo-600 rounded-full flex items-center justify-center shadow-2xl shadow-indigo-600/30 group-hover:bg-indigo-500 transition-all active:scale-90">
-                {isConnecting ? <Loader2 size={32} className="text-white animate-spin" /> : <Mic size={32} className="text-white" />}
-              </div>
-              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest group-hover:text-indigo-400 transition-colors">Start Voice</span>
-            </button>
-          ) : (
-            <button
-              onClick={stopSession}
-              className="group flex flex-col items-center gap-4"
-            >
-              <div className="w-20 h-20 bg-rose-600 rounded-full flex items-center justify-center shadow-2xl shadow-rose-600/30 group-hover:bg-rose-500 transition-all active:scale-90">
-                <PhoneOff size={32} className="text-white" />
-              </div>
-              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest group-hover:text-rose-400 transition-colors">End Session</span>
-            </button>
+          {isConnecting && (
+            <div className="flex items-center justify-center gap-3 text-indigo-400 py-4">
+              <Loader2 size={16} className="animate-spin" />
+              <span className="text-[10px] font-black uppercase tracking-[0.2em]">Syncing Neural Link...</span>
+            </div>
           )}
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 w-full max-w-2xl">
-          {[
-            { icon: <ShieldAlert size={16} className="text-indigo-400" />, title: "Snitch Engine", desc: "Live AI analysis." },
-            { icon: <Volume2 size={16} className="text-indigo-400" />, title: "Low Latency", desc: "Instant feedback." },
-            { icon: <Sparkles size={16} className="text-indigo-400" />, title: "Contextual", desc: "Ask questions." }
-          ].map((feature, i) => (
-            <div key={i} className="bg-slate-900/30 p-4 rounded-2xl border border-white/5 flex items-center gap-3">
-              <div className="p-2.5 bg-indigo-500/10 rounded-xl shrink-0">
-                {feature.icon}
-              </div>
-              <div className="min-w-0">
-                <h4 className="text-[10px] font-black text-slate-200 uppercase tracking-wider truncate">{feature.title}</h4>
-                <p className="text-[10px] text-slate-500 mt-0.5 leading-tight">{feature.desc}</p>
-              </div>
-            </div>
-          ))}
+        {/* Primary Control */}
+        <button
+          onClick={isActive ? stopSession : startSession}
+          disabled={isConnecting}
+          className={`w-24 h-24 rounded-full flex items-center justify-center shadow-2xl transition-all active:scale-90 relative ${
+            isActive 
+              ? 'bg-rose-600 shadow-rose-600/40 hover:bg-rose-500' 
+              : 'bg-indigo-600 shadow-indigo-600/40 hover:bg-indigo-500 disabled:opacity-50'
+          }`}
+        >
+          {isActive ? <PhoneOff size={32} className="text-white" /> : <Mic size={32} className="text-white" />}
+          {isActive && (
+             <div className="absolute -inset-4 border-4 border-white/10 rounded-full animate-ping"></div>
+          )}
+        </button>
+
+        <div className="bg-slate-900/40 p-6 rounded-3xl border border-white/5 w-full space-y-4">
+          <div className="flex items-center gap-2 text-indigo-400">
+            <ShieldCheck size={16} />
+            <span className="text-[10px] font-black uppercase tracking-widest">Audio Forensics Engaged</span>
+          </div>
+          <p className="text-[10px] text-slate-500 font-medium leading-relaxed">
+            In **Voice Guard** mode, AI Snitch analyzes audio frequencies for "jitter" and "shimmer" artifacts typical of real-time AI voice conversion.
+          </p>
         </div>
       </div>
     </div>
