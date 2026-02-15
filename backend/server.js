@@ -1,30 +1,21 @@
 import express from "express";
-import fetch from "node-fetch";
+import cors from "cors";
 
 const app = express();
-app.use(express.json());
+app.use(cors());
+app.use(express.json({ limit: "5mb" }));
 
-app.post("/analyze-frame", async (req, res) => {
-  const { image } = req.body;
+app.post("/vision", (req, res) => {
+  console.log("Frame received");
 
-  const geminiRes = await fetch(
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=YOUR_KEY",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{
-          parts: [
-            { inlineData: { data: image, mimeType: "image/jpeg" } },
-            { text: "Detect AI generated content. Return JSON." }
-          ]
-        }]
-      })
-    }
-  );
-
-  const data = await geminiRes.json();
-  res.json(data);
+  res.json({
+    isScam: false,
+    confidence: 0.25,
+    title: "Test Result",
+    explanation: "Backend communication working"
+  });
 });
 
-app.listen(8000, () => console.log("Backend running"));
+app.listen(8000, () => {
+  console.log("Backend running on http://localhost:8000");
+});
